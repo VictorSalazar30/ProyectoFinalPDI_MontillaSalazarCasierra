@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SmartFlow — Análisis de Flujo Peatonal</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg:       #0a0c10;
+    --surface:  #111318;
+    --card:     #161b22;
+    --border:   #21262d;
+    --accent:   #00e5a0;
+    --accent2:  #00b4d8;
+    --warn:     #f59e0b;
+    --danger:   #ef4444;
+    --text:     #e6edf3;
+    --muted:    #7d8590;
+    --low:      #22c55e;
+    --med:      #f59e0b;
+    --high:     #f97316;
+    --crit:     #ef4444;
+    --none:     #6b7280;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── NOISE OVERLAY ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none; z-index: 0;
+  }
+
+  /* ── HEADER ── */
+  header {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(10,12,16,0.9);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 2rem;
+    display: flex; align-items: center; justify-content: space-between;
+    height: 60px;
+  }
+  .logo { display: flex; align-items: center; gap: .75rem; }
+  .logo-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 12px var(--accent);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .logo-text { font-family: 'Space Mono', monospace; font-size: 1.1rem; color: var(--accent); letter-spacing: .05em; }
+  .logo-sub { font-size: .7rem; color: var(--muted); margin-top: -2px; }
+  .badge {
+    font-family: 'Space Mono', monospace;
+    font-size: .65rem;
+    padding: .25rem .6rem;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    letter-spacing: .08em;
+  }
+  .badge.live { border-color: var(--accent); color: var(--accent); }
+  .badge.live::before { content: '● '; animation: pulse 1s infinite; }
+
+  /* ── MAIN LAYOUT ── */
+  main {
+    position: relative; z-index: 1;
+    max-width: 1400px; margin: 0 auto;
+    padding: 2rem 2rem 4rem;
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    grid-template-rows: auto auto auto;
+    gap: 1.5rem;
+  }
+
+  /* ── CARDS ── */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .card-header {
+    padding: .8rem 1.2rem;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    gap: .5rem;
+  }
+  .card-title {
+    font-family: 'Space Mono', monospace;
+    font-size: .75rem;
+    color: var(--muted);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+  .card-body { padding: 1.2rem; }
+
+  /* ── UPLOAD ZONE ── */
+  #upload-area {
+    grid-column: 1 / -1;
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 2.5rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+    background: var(--card);
+  }
+  #upload-area:hover, #upload-area.drag { border-color: var(--accent); background: rgba(0,229,160,.04); }
+  #upload-area h2 { font-size: 1.1rem; font-weight: 500; margin-bottom: .4rem; }
+  #upload-area p { font-size: .85rem; color: var(--muted); }
+  #upload-area .icon { font-size: 2.5rem; margin-bottom: .8rem; }
+  #file-input { display: none; }
+
+  /* zone selector pills */
+  .zone-pills { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: 1.2rem; justify-content: center; }
+  .zone-pill {
+    padding: .4rem 1rem; border-radius: 20px;
+    border: 1px solid var(--border);
+    background: transparent; color: var(--muted);
+    font-size: .8rem; cursor: pointer;
+    font-family: 'DM Sans', sans-serif;
+    transition: all .15s;
+  }
+  .zone-pill:hover { border-color: var(--accent2); color: var(--accent2); }
+  .zone-pill.active { border-color: var(--accent); background: rgba(0,229,160,.12); color: var(--accent); }
+
+  /* ── CANVAS VIEWER ── */
+  .viewer-wrap {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .canvas-container {
+    position: relative;
+    width: 100%; aspect-ratio: 16/9;
+    background: #000;
+    border-radius: 0 0 8px 8px;
+    overflow: hidden;
+  }
+  #main-canvas { width: 100%; height: 100%; display: block; }
+  #overlay-canvas {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+  }
+
+  /* mode tabs */
+  .mode-tabs { display: flex; gap: 0; }
+  .mode-tab {
+    padding: .5rem 1rem; font-size: .75rem;
+    font-family: 'Space Mono', monospace;
+    background: transparent; border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--muted); cursor: pointer;
+    transition: all .15s;
+    letter-spacing: .04em;
+  }
+  .mode-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .mode-tab:hover:not(.active) { color: var(--text); }
+
+  /* run button */
+  #run-btn {
+    padding: .45rem 1.2rem;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #0a0c10;
+    border: none; cursor: pointer;
+    font-family: 'Space Mono', monospace;
+    font-size: .7rem; font-weight: 700;
+    letter-spacing: .06em;
+    transition: opacity .15s, transform .1s;
+  }
+  #run-btn:hover { opacity: .88; transform: translateY(-1px); }
+  #run-btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+
+  /* ── SIDEBAR ── */
+  .sidebar { grid-column: 2; grid-row: 2 / 4; display: flex; flex-direction: column; gap: 1.2rem; }
+
+  /* metrics */
+  .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+  .metric {
+    background: var(--surface);
+    border-radius: 8px;
+    padding: .9rem .8rem;
+    border: 1px solid var(--border);
+  }
+  .metric-val {
+    font-family: 'Space Mono', monospace;
+    font-size: 1.6rem; font-weight: 700;
+    line-height: 1;
+    color: var(--accent);
+  }
+  .metric-label { font-size: .7rem; color: var(--muted); margin-top: .25rem; }
+
+  /* congestion badge */
+  .congestion-display {
+    display: flex; align-items: center; gap: .75rem;
+    padding: .9rem 1rem;
+    border-radius: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+  .cong-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
+  .cong-level { font-family: 'Space Mono', monospace; font-size: .9rem; font-weight: 700; }
+  .cong-sub { font-size: .7rem; color: var(--muted); }
+
+  /* detections list */
+  .det-list { display: flex; flex-direction: column; gap: .4rem; max-height: 220px; overflow-y: auto; }
+  .det-list::-webkit-scrollbar { width: 4px; }
+  .det-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .det-item {
+    display: flex; align-items: center; gap: .6rem;
+    padding: .45rem .6rem;
+    border-radius: 6px;
+    background: var(--surface);
+    font-size: .72rem;
+  }
+  .det-num {
+    font-family: 'Space Mono', monospace;
+    color: var(--accent); font-size: .65rem;
+    min-width: 22px;
+  }
+  .det-conf { margin-left: auto; color: var(--muted); font-family: 'Space Mono', monospace; }
+  .conf-bar { height: 3px; border-radius: 2px; background: var(--accent); flex: 1; max-width: 60px; }
+
+  /* ── HEATMAP ROW ── */
+  .heatmap-row {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  /* grid analysis */
+  .grid-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'Space Mono', monospace;
+    font-size: .75rem;
+  }
+  .grid-table td {
+    width: 25%; aspect-ratio: 2/1;
+    text-align: center;
+    vertical-align: middle;
+    border: 1px solid var(--border);
+    transition: background .3s;
+    font-weight: 700;
+  }
+
+  /* ── CHARTS ── */
+  .bar-chart { display: flex; flex-direction: column; gap: .5rem; }
+  .bar-row { display: flex; align-items: center; gap: .6rem; font-size: .75rem; }
+  .bar-label { width: 80px; color: var(--muted); text-align: right; font-size: .7rem; }
+  .bar-track { flex: 1; height: 8px; background: var(--surface); border-radius: 4px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 4px; transition: width .6s cubic-bezier(.4,0,.2,1); }
+  .bar-value { width: 30px; text-align: right; font-family: 'Space Mono', monospace; font-size: .7rem; color: var(--muted); }
+
+  /* ── EMPTY STATE ── */
+  .empty-state {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    height: 100%; gap: .5rem;
+    color: var(--muted); font-size: .85rem;
+    padding: 2rem; text-align: center;
+  }
+  .empty-state .ei { font-size: 2rem; margin-bottom: .4rem; }
+
+  /* ── PROGRESS BAR ── */
+  #progress-wrap { display: none; padding: .8rem 1.2rem; }
+  .progress-bar-track { height: 3px; background: var(--surface); border-radius: 2px; }
+  .progress-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; width: 0%; transition: width .2s; }
+  #progress-label { font-size: .7rem; color: var(--muted); margin-top: .4rem; font-family: 'Space Mono', monospace; }
+
+  /* ── FOOTER INFO ── */
+  .info-row {
+    grid-column: 1 / -1;
+    display: flex; gap: 1rem; flex-wrap: wrap;
+    padding: .8rem 0 0;
+    border-top: 1px solid var(--border);
+  }
+  .info-chip {
+    font-size: .7rem; color: var(--muted);
+    font-family: 'Space Mono', monospace;
+  }
+  .info-chip span { color: var(--accent2); }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; }
+    .sidebar { grid-column: 1; grid-row: auto; }
+    .heatmap-row { grid-row: auto; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-dot"></div>
+    <div>
+      <div class="logo-text">SmartFlow</div>
+      <div class="logo-sub">Sistema de Análisis de Flujo Peatonal · UAO PDI 2026</div>
+    </div>
+  </div>
+  <div style="display:flex;gap:.6rem;align-items:center">
+    <span class="badge">YOLOv8n</span>
+    <span class="badge">OpenCV</span>
+    <span id="live-badge" class="badge">SIMULADO</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- ── UPLOAD ── -->
+  <div id="upload-area" onclick="document.getElementById('file-input').click()">
+    <div class="icon">📷</div>
+    <h2>Cargar imagen del campus</h2>
+    <p>Arrastra una imagen aquí o haz clic para seleccionar · JPG, PNG, WebP</p>
+    <input type="file" id="file-input" accept="image/*"/>
+    <div class="zone-pills">
+      <button class="zone-pill active" data-zone="Cafetería">☕ Cafetería</button>
+      <button class="zone-pill" data-zone="Sótano">🏛️ Sótano</button>
+      <button class="zone-pill" data-zone="Biblioteca">📚 Biblioteca</button>
+    </div>
+  </div>
+
+  <!-- ── MAIN VIEWER ── -->
+  <div class="card viewer-wrap">
+    <div class="card-header">
+      <span class="card-title">Vista de análisis</span>
+      <div class="mode-tabs">
+        <button class="mode-tab active" data-mode="detections">Detecciones</button>
+        <button class="mode-tab" data-mode="heatmap">Mapa de calor</button>
+        <button class="mode-tab" data-mode="overlay">Overlay</button>
+        <button class="mode-tab" data-mode="grid">Cuadrícula</button>
+      </div>
+      <button id="run-btn" disabled>▶ ANALIZAR</button>
+    </div>
+    <div id="progress-wrap">
+      <div class="progress-bar-track"><div class="progress-bar-fill" id="progress-fill"></div></div>
+      <div id="progress-label">Cargando pipeline…</div>
+    </div>
+    <div class="canvas-container">
+      <canvas id="main-canvas"></canvas>
+      <canvas id="overlay-canvas"></canvas>
+    </div>
+  </div>
+
+  <!-- ── SIDEBAR ── -->
+  <div class="sidebar">
+
+    <!-- CONGESTION -->
+    <div class="card">
+      <div class="card-header"><span class="card-title">Nivel de congestión</span></div>
+      <div class="card-body">
+        <div class="congestion-display" id="cong-display">
+          <div class="cong-dot" id="cong-dot" style="background:var(--none)"></div>
+          <div>
+            <div class="cong-level" id="cong-level">Sin datos</div>
+            <div class="cong-sub" id="cong-sub">Carga una imagen para analizar</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- METRICS -->
+    <div class="card">
+      <div class="card-header"><span class="card-title">Métricas</span></div>
+      <div class="card-body">
+        <div class="metric-grid">
+          <div class="metric"><div class="metric-val" id="m-count">—</div><div class="metric-label">Personas detectadas</div></div>
+          <div class="metric"><div class="metric-val" id="m-conf">—</div><div class="metric-label">Confianza media</div></div>
+          <div class="metric"><div class="metric-val" id="m-density">—</div><div class="metric-label">Densidad (pers/m²)</div></div>
+          <div class="metric"><div class="metric-val" id="m-time">—</div><div class="metric-label">Tiempo inferencia</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DETECTIONS LIST -->
+    <div class="card" style="flex:1">
+      <div class="card-header"><span class="card-title">Detecciones individuales</span></div>
+      <div class="card-body">
+        <div class="det-list" id="det-list">
+          <div class="empty-state"><div class="ei">🔍</div>Sin detecciones aún</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── HEATMAP ROW ── -->
+  <div class="card heatmap-row">
+    <div class="card-header">
+      <span class="card-title">Análisis zonal · cuadrícula 3×4</span>
+      <span class="card-title" id="zone-name-display" style="color:var(--accent2)">—</span>
+    </div>
+    <div class="card-body">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:1.2rem; align-items:start">
+        <!-- Grid density table -->
+        <div>
+          <p style="font-size:.7rem;color:var(--muted);margin-bottom:.6rem;font-family:'Space Mono',monospace">DENSIDAD POR CELDA</p>
+          <table class="grid-table" id="grid-table">
+            <tbody id="grid-tbody"></tbody>
+          </table>
+        </div>
+        <!-- Zone bar chart -->
+        <div>
+          <p style="font-size:.7rem;color:var(--muted);margin-bottom:.8rem;font-family:'Space Mono',monospace">HISTORIAL DE ZONAS</p>
+          <div class="bar-chart" id="zone-chart">
+            <div class="empty-state" style="height:auto"><span style="font-size:1.2rem">📊</span><br>Analiza zonas para ver comparativa</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── FOOTER INFO ── -->
+  <div class="info-row">
+    <span class="info-chip">Modelo: <span>YOLOv8n (simulado)</span></span>
+    <span class="info-chip">Clase: <span>persona (id=0, COCO)</span></span>
+    <span class="info-chip">Preprocesamiento: <span>CLAHE</span></span>
+    <span class="info-chip">Heatmap: <span>Kernel Gaussiano σ=40</span></span>
+    <span class="info-chip">Umbral conf: <span>0.40</span></span>
+    <span class="info-chip">UAO · Ingeniería Multimedia · PDI 2026</span>
+  </div>
+
+</main>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+//  SmartFlow — Pipeline simulado en JavaScript/Canvas
+//  Replica la lógica del notebook Python:
+//    1. Carga imagen
+//    2. Simula detecciones YOLO (bounding boxes con confianza)
+//    3. Genera mapa de calor gaussiano
+//    4. Analiza cuadrícula 3×4
+//    5. Clasifica congestión
+//    6. Dibuja anotaciones y métricas
+// ═══════════════════════════════════════════════════════════════════
+// ⚙️  CONFIGURACIÓN — Cambia esta URL por la que te da CLOUDFLARE en Colab
+// ═══════════════════════════════════════════════════════════════════
+    const SMARTFLOW_API = 'https://link-budapest-member-package.trycloudflare.com/';
+//                     ↑ reemplaza esto con tu URL real de CLOUDFLARE
+// ═══════════════════════════════════════════════════════════════════
+
+const canvas    = document.getElementById('main-canvas');
+const overlayC  = document.getElementById('overlay-canvas');
+const ctx       = canvas.getContext('2d');
+const octx      = overlayC.getContext('2d');
+
+let currentImg   = null;
+let currentFile  = null;  // archivo original para enviar al servidor
+let detections   = [];
+let heatmapData  = null;
+let currentMode  = 'detections';
+let currentZone  = 'Cafetería';
+let zoneHistory  = {};
+let isAnalyzed   = false;
+
+// ── Zone pill selection ──────────────────────────────────────────
+document.querySelectorAll('.zone-pill').forEach(pill => {
+  pill.addEventListener('click', e => {
+    e.stopPropagation();
+    document.querySelectorAll('.zone-pill').forEach(p => p.classList.remove('active'));
+    pill.classList.add('active');
+    currentZone = pill.dataset.zone;
+  });
+});
+
+// ── Mode tabs ───────────────────────────────────────────────────
+document.querySelectorAll('.mode-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    currentMode = tab.dataset.mode;
+    if (isAnalyzed) renderMode();
+  });
+});
+
+// ── File input / drag-drop ───────────────────────────────────────
+const fileInput   = document.getElementById('file-input');
+const uploadArea  = document.getElementById('upload-area');
+
+fileInput.addEventListener('change', e => { if (e.target.files[0]) loadImage(e.target.files[0]); });
+uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('drag'); });
+uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag'));
+uploadArea.addEventListener('drop', e => {
+  e.preventDefault(); uploadArea.classList.remove('drag');
+  const f = e.dataTransfer.files[0];
+  if (f && f.type.startsWith('image/')) loadImage(f);
+});
+
+function loadImage(file) {
+  currentFile = file;  // guardar referencia para enviar al servidor
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const img = new Image();
+    img.onload = () => {
+      currentImg = img;
+      isAnalyzed = false;
+      detections = [];
+      heatmapData = null;
+      // resize canvases
+      const W = img.naturalWidth;
+      const H = img.naturalHeight;
+      canvas.width = W; canvas.height = H;
+      overlayC.width = W; overlayC.height = H;
+      ctx.drawImage(img, 0, 0);
+      octx.clearRect(0, 0, W, H);
+      document.getElementById('run-btn').disabled = false;
+      resetMetrics();
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// ── Run analysis ─────────────────────────────────────────────────
+document.getElementById('run-btn').addEventListener('click', runPipeline);
+
+async function runPipeline() {
+  if (!currentImg || !currentFile) return;
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true;
+
+  showProgress(true);
+  setProgress(10, 'Enviando imagen al servidor…');
+  await sleep(80);
+  setProgress(25, 'Preprocesando imagen (CLAHE)…');
+
+  try {
+    // Enviar imagen al servidor Flask en Colab
+    const formData = new FormData();
+    formData.append('image', currentFile);
+
+    setProgress(45, 'Ejecutando YOLOv8n — detección de personas…');
+
+    const resp = await fetch(`${SMARTFLOW_API}/analyze`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const result = await resp.json();
+    if (!result.ok) throw new Error(result.error || 'Error en el servidor');
+
+    setProgress(75, 'Construyendo mapa de calor gaussiano…');
+    await sleep(100);
+    setProgress(90, 'Análisis zonal 3×4…');
+    await sleep(100);
+    setProgress(100, 'Pipeline completado ✓');
+    await sleep(300);
+    showProgress(false);
+
+    detections = result.detections;
+    const inferTime = result.infer_ms;
+
+    // Recalibrar canvas al tamaño real de la imagen del servidor
+    const W = result.img_w || currentImg.naturalWidth;
+    const H = result.img_h || currentImg.naturalHeight;
+    canvas.width = W; canvas.height = H;
+    overlayC.width = W; overlayC.height = H;
+    ctx.drawImage(currentImg, 0, 0, W, H);
+
+    heatmapData = buildHeatmap(detections, W, H);
+    isAnalyzed = true;
+
+    updateMetrics(detections, inferTime);
+    updateDetList(detections);
+    updateGrid(detections, W, H);
+    updateCongestion(detections.length);
+    updateZoneHistory(currentZone, detections.length);
+    updateZoneChart();
+    document.getElementById('zone-name-display').textContent = currentZone;
+    document.getElementById('live-badge').textContent = 'YOLOv8 REAL';
+    document.getElementById('live-badge').classList.add('live');
+
+    renderMode();
+
+  } catch (err) {
+    showProgress(false);
+    alert(`❌ Error al conectar con el servidor:\n${err.message}\n\nVerifica que la URL de ngrok en SMARTFLOW_API sea correcta.`);
+    console.error(err);
+  }
+
+  btn.disabled = false;
+}
+
+// ────────────────────────────────────────────────────────────────
+// SIMULACIÓN DE YOLO  (réplica de detect_people del notebook)
+// Genera bounding boxes verosímiles sobre la imagen cargada
+// ────────────────────────────────────────────────────────────────
+function simulateYOLO(W, H) {
+  // Número de personas varía según zona seleccionada (similar a datos reales)
+  const zoneRange = {
+    'Cafetería':       [6, 14],
+    'Sótano':          [3, 10],
+    'Biblioteca':      [2, 7],
+    'Pasillo central': [4, 12],
+    'Entrada principal':[5, 16],
+  };
+  const [lo, hi] = zoneRange[currentZone] || [2, 10];
+  const n = randInt(lo, hi + 1);
+
+  const dets = [];
+  // Distribución no uniforme: más personas en la mitad inferior (perspectiva cámara)
+  for (let i = 0; i < n; i++) {
+    const cx = randInt(Math.floor(W * 0.05), Math.floor(W * 0.95));
+    // Perspectiva: personas más pequeñas en la parte alta de la imagen
+    const yBias = Math.random() ** 0.7; // sesgo hacia la parte baja
+    const cy_floor = Math.floor(H * 0.25 + yBias * H * 0.70);
+    const scale = 0.3 + yBias * 0.5; // personas más grandes abajo
+    const bw = Math.floor(W * 0.04 * scale + Math.random() * W * 0.03);
+    const bh = Math.floor(bw * (1.8 + Math.random() * 0.6));
+    const x1 = Math.max(0, cx - Math.floor(bw / 2));
+    const y1 = Math.max(0, cy_floor - bh);
+    const x2 = Math.min(W - 1, x1 + bw);
+    const y2 = Math.min(H - 1, y1 + bh);
+    const conf = 0.40 + Math.random() * 0.58; // conf ≥ 0.40 (umbral del notebook)
+    dets.push({ x1, y1, x2, y2, cx, cy: Math.floor((y1 + y2) / 2), cy_floor: y2, conf });
+  }
+  // NMS simple para quitar solapamientos extremos
+  return nmsFilter(dets, 0.45);
+}
+
+function nmsFilter(dets, iouThresh) {
+  dets.sort((a, b) => b.conf - a.conf);
+  const keep = [];
+  const used = new Array(dets.length).fill(false);
+  for (let i = 0; i < dets.length; i++) {
+    if (used[i]) continue;
+    keep.push(dets[i]);
+    for (let j = i + 1; j < dets.length; j++) {
+      if (!used[j] && iou(dets[i], dets[j]) > iouThresh) used[j] = true;
+    }
+  }
+  return keep;
+}
+
+function iou(a, b) {
+  const ix1 = Math.max(a.x1, b.x1), iy1 = Math.max(a.y1, b.y1);
+  const ix2 = Math.min(a.x2, b.x2), iy2 = Math.min(a.y2, b.y2);
+  const inter = Math.max(0, ix2 - ix1) * Math.max(0, iy2 - iy1);
+  if (inter === 0) return 0;
+  const aA = (a.x2 - a.x1) * (a.y2 - a.y1);
+  const bA = (b.x2 - b.x1) * (b.y2 - b.y1);
+  return inter / (aA + bA - inter);
+}
+
+// ────────────────────────────────────────────────────────────────
+// MAPA DE CALOR  (réplica de build_heatmap del notebook)
+// Kernel gaussiano acumulado por centroide de cada persona
+// ────────────────────────────────────────────────────────────────
+function buildHeatmap(dets, W, H, sigma = 40) {
+  const hm = new Float32Array(W * H);
+  for (const d of dets) {
+    const cx = d.cx, cy = d.cy_floor;
+    const r = Math.ceil(sigma * 3);
+    for (let y = Math.max(0, cy - r); y < Math.min(H, cy + r); y++) {
+      for (let x = Math.max(0, cx - r); x < Math.min(W, cx + r); x++) {
+        hm[y * W + x] += Math.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2 * sigma * sigma));
+      }
+    }
+  }
+  // Normalizar 0-1
+  let maxV = 0;
+  for (let i = 0; i < hm.length; i++) if (hm[i] > maxV) maxV = hm[i];
+  if (maxV > 0) for (let i = 0; i < hm.length; i++) hm[i] /= maxV;
+  return { data: hm, W, H };
+}
+
+// JET colormap
+function jet(t) {
+  // Blue → Cyan → Green → Yellow → Red
+  const r = Math.min(1, Math.max(0, 1.5 - Math.abs(4*t - 3)));
+  const g = Math.min(1, Math.max(0, 1.5 - Math.abs(4*t - 2)));
+  const b = Math.min(1, Math.max(0, 1.5 - Math.abs(4*t - 1)));
+  return [Math.round(r*255), Math.round(g*255), Math.round(b*255)];
+}
+
+// ────────────────────────────────────────────────────────────────
+// RENDER MODES
+// ────────────────────────────────────────────────────────────────
+function renderMode() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  octx.clearRect(0, 0, overlayC.width, overlayC.height);
+  ctx.drawImage(currentImg, 0, 0);
+
+  if (currentMode === 'detections') drawDetections();
+  else if (currentMode === 'heatmap') drawHeatmapOnly();
+  else if (currentMode === 'overlay') drawOverlay();
+  else if (currentMode === 'grid') drawGridMode();
+}
+
+function drawDetections() {
+  for (let i = 0; i < detections.length; i++) {
+    const d = detections[i];
+    const { x1, y1, x2, y2, conf } = d;
+    // Bounding box
+    ctx.strokeStyle = '#00dc88';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    // Label background
+    const label = `#${i+1} ${conf.toFixed(2)}`;
+    ctx.font = `bold 12px 'Space Mono', monospace`;
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = '#00dc88';
+    ctx.fillRect(x1, y1 - 18, tw + 8, 18);
+    ctx.fillStyle = '#0a0c10';
+    ctx.fillText(label, x1 + 4, y1 - 4);
+    // Floor dot
+    ctx.beginPath();
+    ctx.arc(d.cx, d.cy_floor, 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff7f40';
+    ctx.fill();
+  }
+}
+
+function drawHeatmapOnly() {
+  // Draw heatmap on top of dim image
+  ctx.globalAlpha = 0.35;
+  ctx.drawImage(currentImg, 0, 0);
+  ctx.globalAlpha = 1;
+  renderHeatmapOnCtx(ctx, 0.9);
+}
+
+function drawOverlay() {
+  renderHeatmapOnCtx(ctx, 0.55);
+  drawDetections();
+}
+
+function renderHeatmapOnCtx(targetCtx, alpha) {
+  if (!heatmapData) return;
+  const { data, W, H } = heatmapData;
+  const imgData = targetCtx.createImageData(W, H);
+  for (let i = 0; i < W * H; i++) {
+    const v = data[i];
+    if (v < 0.01) { imgData.data[i*4+3] = 0; continue; }
+    const [r, g, b] = jet(v);
+    imgData.data[i*4]   = r;
+    imgData.data[i*4+1] = g;
+    imgData.data[i*4+2] = b;
+    imgData.data[i*4+3] = Math.floor(v * 220 * alpha);
+  }
+  targetCtx.putImageData(imgData, 0, 0);
+}
+
+function drawGridMode() {
+  const W = canvas.width, H = canvas.height;
+  const rows = 3, cols = 4;
+  const cw = W / cols, ch = H / rows;
+  const grid = computeGrid(detections, W, H);
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const count = grid[r][c];
+      const [, colorHex] = classifyCongestion(count);
+      // Fill with congestion color
+      ctx.fillStyle = hexToRgba(colorHex, 0.35);
+      ctx.fillRect(c * cw, r * ch, cw, ch);
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(c * cw, r * ch, cw, ch);
+      // Count label
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.font = `bold ${Math.floor(cw * 0.22)}px 'Space Mono', monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(count, c * cw + cw / 2, r * ch + ch / 2);
+    }
+  }
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+}
+
+// ────────────────────────────────────────────────────────────────
+// CONGESTION CLASSIFIER  (réplica exacta del notebook)
+// ────────────────────────────────────────────────────────────────
+function classifyCongestion(count) {
+  if (count === 0)   return ['Sin actividad', '#6b7280'];
+  if (count <= 3)    return ['Baja',          '#22c55e'];
+  if (count <= 8)    return ['Media',         '#f59e0b'];
+  if (count <= 15)   return ['Alta',          '#f97316'];
+  return               ['Crítica',            '#ef4444'];
+}
+
+// ────────────────────────────────────────────────────────────────
+// GRID ANALYSIS  (réplica de grid_density_analysis)
+// ────────────────────────────────────────────────────────────────
+function computeGrid(dets, W, H, rows = 3, cols = 4) {
+  const g = Array.from({length: rows}, () => new Array(cols).fill(0));
+  for (const d of dets) {
+    const r = Math.min(Math.floor(d.cy_floor / (H / rows)), rows - 1);
+    const c = Math.min(Math.floor(d.cx / (W / cols)), cols - 1);
+    g[r][c]++;
+  }
+  return g;
+}
+
+// ── UI UPDATES ───────────────────────────────────────────────────
+function updateMetrics(dets, inferTime) {
+  const count = dets.length;
+  const avgConf = count > 0 ? (dets.reduce((s, d) => s + d.conf, 0) / count) : 0;
+  const area = (canvas.width * canvas.height) / 1e6; // aprox en m² (escala ficticia ~1px=0.01m)
+  const density = count > 0 ? (count / (area * 0.05)).toFixed(2) : '0';
+  document.getElementById('m-count').textContent = count;
+  document.getElementById('m-conf').textContent = count > 0 ? (avgConf * 100).toFixed(0) + '%' : '—';
+  document.getElementById('m-density').textContent = density;
+  document.getElementById('m-time').textContent = inferTime + 'ms';
+}
+
+function updateDetList(dets) {
+  const list = document.getElementById('det-list');
+  if (dets.length === 0) {
+    list.innerHTML = '<div class="empty-state"><div class="ei">🔍</div>Sin detecciones</div>';
+    return;
+  }
+  list.innerHTML = dets.map((d, i) => `
+    <div class="det-item">
+      <span class="det-num">#${i + 1}</span>
+      <span style="color:var(--text);font-size:.7rem">
+        cx=${d.cx}, cy=${d.cy_floor}
+      </span>
+      <div class="conf-bar" style="width:${d.conf * 60}px"></div>
+      <span class="det-conf">${(d.conf * 100).toFixed(0)}%</span>
+    </div>
+  `).join('');
+}
+
+function updateGrid(dets, W, H) {
+  const grid = computeGrid(dets, W, H);
+  const tbody = document.getElementById('grid-tbody');
+  tbody.innerHTML = grid.map(row =>
+    '<tr>' + row.map(cell => {
+      const [, color] = classifyCongestion(cell);
+      return `<td style="background:${hexToRgba(color, 0.25)};color:${color}">${cell}</td>`;
+    }).join('') + '</tr>'
+  ).join('');
+}
+
+function updateCongestion(count) {
+  const [level, color] = classifyCongestion(count);
+  document.getElementById('cong-dot').style.background = color;
+  document.getElementById('cong-dot').style.boxShadow = `0 0 8px ${color}`;
+  document.getElementById('cong-level').textContent = level;
+  document.getElementById('cong-sub').textContent = `${count} persona${count !== 1 ? 's' : ''} detectada${count !== 1 ? 's' : ''}`;
+}
+
+function updateZoneHistory(zone, count) {
+  zoneHistory[zone] = count;
+}
+
+function updateZoneChart() {
+  const chart = document.getElementById('zone-chart');
+  const entries = Object.entries(zoneHistory);
+  if (entries.length === 0) return;
+  const max = Math.max(...entries.map(e => e[1]), 1);
+  chart.innerHTML = entries.map(([zone, count]) => {
+    const [, color] = classifyCongestion(count);
+    const pct = (count / max * 100).toFixed(0);
+    return `
+      <div class="bar-row">
+        <span class="bar-label">${zone.substring(0, 10)}</span>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:${pct}%;background:${color}"></div>
+        </div>
+        <span class="bar-value">${count}</span>
+      </div>`;
+  }).join('');
+}
+
+function resetMetrics() {
+  document.getElementById('m-count').textContent = '—';
+  document.getElementById('m-conf').textContent = '—';
+  document.getElementById('m-density').textContent = '—';
+  document.getElementById('m-time').textContent = '—';
+  document.getElementById('cong-level').textContent = 'Sin datos';
+  document.getElementById('cong-sub').textContent = 'Carga una imagen para analizar';
+  document.getElementById('cong-dot').style.background = 'var(--none)';
+  document.getElementById('cong-dot').style.boxShadow = 'none';
+  document.getElementById('det-list').innerHTML = '<div class="empty-state"><div class="ei">🔍</div>Sin detecciones aún</div>';
+  document.getElementById('grid-tbody').innerHTML = '';
+  document.getElementById('zone-name-display').textContent = '—';
+  document.getElementById('live-badge').textContent = 'EN ESPERA';
+  document.getElementById('live-badge').classList.remove('live');
+}
+
+// ── PROGRESS ─────────────────────────────────────────────────────
+function showProgress(v) {
+  document.getElementById('progress-wrap').style.display = v ? 'block' : 'none';
+  if (!v) { document.getElementById('progress-fill').style.width = '0%'; }
+}
+function setProgress(pct, label) {
+  document.getElementById('progress-fill').style.width = pct + '%';
+  document.getElementById('progress-label').textContent = label;
+}
+
+// ── UTILS ────────────────────────────────────────────────────────
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+function randInt(lo, hi) { return Math.floor(Math.random() * (hi - lo)) + lo; }
+function hexToRgba(hex, a) {
+  const r = parseInt(hex.slice(1,3),16);
+  const g = parseInt(hex.slice(3,5),16);
+  const b = parseInt(hex.slice(5,7),16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+// ── EMPTY CANVAS INIT ────────────────────────────────────────────
+(function initEmptyCanvas() {
+  canvas.width  = 960;
+  canvas.height = 540;
+  overlayC.width  = 960;
+  overlayC.height = 540;
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, 960, 540);
+  ctx.fillStyle = '#21262d';
+  ctx.font = '16px Space Mono, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('Carga una imagen para comenzar el análisis', 480, 270);
+  ctx.textAlign = 'left';
+})();
+</script>
+</body>
+</html>
